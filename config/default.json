@@ -1,0 +1,19 @@
+{
+    "kurento": {
+        "ip":"KURENTO_IP_GOES_HERE"
+    },
+    "asterix" : {
+        "port": "ASTERIX_PORT",
+        "ip": "ASTERIX_IP_GOES_HERE",
+        "account": "EXT",
+        "password": "ACCOUNT_PASSWORD"
+    },
+    "nat": {
+        "stunServers" : [
+            "stun:stun3.l.google.com:19302"
+        ],
+        "turnServer": [
+            "TODO:List Turn Servers here..."
+        ]
+    }
+}

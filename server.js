@@ -24,11 +24,15 @@ var kurento = require('kurento-client');
 var fs    = require('fs');
 var https = require('https');
 var SIP = require('sip.js');
+var config = require("config");
+
+var kurentoIPAddress = config.get("kurento.ip");
+var stunServers = config.get("nat.stunServers");
 
 var argv = minimist(process.argv.slice(2), {
   default: {
       as_uri: "https://localhost:8443/",
-      ws_uri: "ws://107.22.152.22:8111/kurento"
+      ws_uri: `ws://${kurentoIPAddress}:8888/kurento`
   }
 });
 
@@ -51,8 +55,8 @@ var userRegistry = new UserRegistry();
 var pipelines = {};
 var candidatesQueue = {};
 var idCounter = 0;
-var sipServer = '107.22.152.22';
-
+var sipServer = config.get("asterix.ip");
+var sipPort = config.get("asterix.port");
 function nextUniqueId() {
     idCounter++;
     return idCounter.toString();
@@ -159,6 +163,9 @@ KurentoMediaHandler.prototype = {
             value: desc
         }; 
         onSuccess();
+    },
+    hasDescription: () => {
+        return true;
     }
 };
 
@@ -369,14 +376,20 @@ function incomingCallResponse(calleeId, callResponse, calleeSdp, ws) {
     callee.sdpOffer = calleeSdp;
 
     if (callResponse === 'accept') {
+        console.log("We are accepting the call...")
         createCallPipeline(callee, (error, sdpAnswer) => {
+            if(error) {
+                console.error("We have an error: ", error);
+            }
 
             /* ***************************************************
                 If the callee accepted the call, a Kurento media 
                 pipeline is created and the RTPEndPoint processes 
                 the SDP offer we got from Asterisk
             *************************************************** */
-            callee.pipeline.rtpEndPoint.processOffer(callee.asteriskSdp.value).then((answer) => {
+           console.log("SDP is as: ", callee.asteriskSdp.value.body);
+            callee.pipeline.rtpEndPoint.processOffer(callee.asteriskSdp.value.body).then((answer) => {
+                console.log("RTP Endpoint answer: ", answer)
                 callee.asteriskSdp = {
                     type: 'answer', 
                     value: answer
@@ -385,10 +398,13 @@ function incomingCallResponse(calleeId, callResponse, calleeSdp, ws) {
             });
             
             // We let the client know everything's ready to begin streaming
+            
+            console.log("Should be sending: ", sdpAnswer);
             var message = {
                 id: 'startCommunication',
-                sdpAnswer
+                sdpAnswer: sdpAnswer
             };
+            console.log("But niggas have errors");
             callee.sendMessage(message);
         }); 
     } else {
@@ -406,12 +422,15 @@ function createCallPipeline(user, callback) {
 
         pipeline.generateSdpAnswer(user.sdpOffer, function(error, sdpAnswer) {
             if (error) {
+                console.error("We have an error: ", error);
+                console.log("Corresponding to this answer:", sdpAnswer);
                 pipeline.release();
                 return callback(error);
             }
 
             user.pipeline = pipeline;
             console.log(`${user.ext} <- pipeline`);
+            console.log("Answer: ", sdpAnswer);
             callback(null, sdpAnswer);
         });
     });
@@ -455,6 +474,7 @@ function setupCallSession(user) {
 
     // This would tell a caller that its INVITE was accepted
     user.session.on('accepted', () => {
+        console.log("Call was accepted!!!!!");
         let message = {
             id: 'callResponse',
             response : 'accepted',
@@ -467,10 +487,17 @@ function setupCallSession(user) {
     createCallPipeline(user, (error, sdpAnswer) => {
         if(error) {
             if(user.pipeline) user.pipeline.release();
-            console.log('Error', error);
+            console.log('Error: ', error);
             rejectCall(JSON.stringify(error));
         } else {
             user.sdpAnswer = sdpAnswer;
+            // We should be calling somethin
+            let message = {
+                id: 'callResponse',
+                response : 'accepted',
+                sdpAnswer: user.sdpAnswer
+            };
+            user.sendMessage(message);
         }
     });
 }
@@ -534,9 +561,9 @@ function register(id, ext, password, ws, callback) {
 
     var userAgent = new SIP.UA({
         uri: `sip:${ext}@${sipServer}`,
-        wsServers: [`ws://${sipServer}:8088/ws`],
+        wsServers: [`ws://${sipServer}:${sipPort}/ws`],
         authorizationUser: ext,
-        stunServers: ['stun:107.22.152.22:3478'],
+        stunServers: stunServers, 
         password,
         mediaHandlerFactory: makeHandlerFactory(ext),
         hackIpInContact: true,

@@ -26,6 +26,8 @@ const REGISTERING = 1;
 const REGISTERED = 2;
 var registerState = null
 
+// TODO: Make 
+
 function setRegisterState(nextState) {
 	switch (nextState) {
 	case NOT_REGISTERED:
@@ -120,7 +122,11 @@ ws.onmessage = function(message) {
 		stop(true);
 		break;
 	case 'iceCandidate':
-		webRtcPeer.addIceCandidate(parsedMessage.candidate)
+		console.log("Adding Candidate: ", parsedMessage.candidate);
+		webRtcPeer.addIceCandidate(parsedMessage.candidate, function(error) {
+			if (error)
+				return console.error('Error adding candidate: ' + error);
+		})
 		break;
 	default:
 		console.error('Unrecognized message', parsedMessage);
@@ -147,6 +153,7 @@ function callResponse(message) {
 		console.log(errorMessage);
 		stop(true);
 	} else {
+		console.log("Processing the Answer: ", message.sdpAnswer);
 		setCallState(IN_CALL);
 		webRtcPeer.processAnswer(message.sdpAnswer);
 	}
@@ -154,6 +161,7 @@ function callResponse(message) {
 
 function startCommunication(message) {
 	setCallState(IN_CALL);
+	console.log("Processing the Communication Answer: ", message.sdpAnswer);
 	webRtcPeer.processAnswer(message.sdpAnswer);
 }
 
@@ -179,18 +187,25 @@ function incomingCall(message) {
 			localVideo : videoInput,
 			remoteVideo : videoOutput,
 			onicecandidate : onIceCandidate,
-			configuration : { iceServers : [{"urls" : "stun:107.22.152.22:3478"},
-			{"urls" : "turn:107.22.152.22", "username":"ubuntu", "credential":"kurentoserverpass"}]}
+			configuration : { 
+				iceServers : [
+					{
+						'urls': ['stun:stun.l.google.com:19302']
+					}
+				]
+			} 
 		}
 
-		webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerSendrecv(options,
+		console.log("Trying to recv stuff...");
+		webRtcPeer = new kurentoUtils.WebRtcPeer.WebRtcPeerSendrecv(options,
 				function(error) {
+					console.log("Trying to recv stuff...");
 					if (error) {
 						console.error(error);
 						setCallState(NO_CALL);
 					}
 
-					this.generateOffer(function(error, offerSdp) {
+					webRtcPeer.generateOffer(function(error, offerSdp) {
 						if (error) {
 							console.error(error);
 							setCallState(NO_CALL);
@@ -251,19 +266,24 @@ function call() {
 		localVideo : videoInput,
 		remoteVideo : videoOutput,
 		onicecandidate : onIceCandidate,
-		configuration : { iceServers : [{"urls" : "stun:107.22.152.22:3478"},
-		{"urls" : "turn:107.22.152.22", "username":"ubuntu", "credential":"kurentoserverpass"}]}
+		configuration : { 
+			iceServers : [
+				{
+					'urls': ['stun:stun.l.google.com:19302']
+				}
+			]
+		}
 	}
 	console.log('create webRtcPeer ...');
 
-	webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerSendrecv(options, function(error) {
+	webRtcPeer = new kurentoUtils.WebRtcPeer.WebRtcPeerSendrecv(options, function(error) {
 		if (error) {
 			console.error(error);
 			setCallState(NO_CALL);
 		}
 		console.log('created webRtcPeer')
 
-		this.generateOffer(function(error, offerSdp) {
+		webRtcPeer.generateOffer(function(error, offerSdp) {
 			if (error) {
 				console.error(error);
 				setCallState(NO_CALL);
