@@ -205,7 +205,7 @@ function incomingCall(message) {
 						setCallState(NO_CALL);
 					}
 
-					webRtcPeer.generateOffer(function(error, offerSdp) {
+					this.generateOffer(function(error, offerSdp) {
 						if (error) {
 							console.error(error);
 							setCallState(NO_CALL);
@@ -283,7 +283,7 @@ function call() {
 		}
 		console.log('created webRtcPeer')
 
-		webRtcPeer.generateOffer(function(error, offerSdp) {
+		this.generateOffer(function(error, offerSdp) {
 			if (error) {
 				console.error(error);
 				setCallState(NO_CALL);

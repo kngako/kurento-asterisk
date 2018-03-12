@@ -492,12 +492,12 @@ function setupCallSession(user) {
         } else {
             user.sdpAnswer = sdpAnswer;
             // We should be calling somethin
-            let message = {
-                id: 'callResponse',
-                response : 'accepted',
-                sdpAnswer: user.sdpAnswer
-            };
-            user.sendMessage(message);
+            // let message = {
+            //     id: 'callResponse',
+            //     response : 'accepted',
+            //     sdpAnswer: user.sdpAnswer
+            // };
+            // user.sendMessage(message);
         }
     });
 }
