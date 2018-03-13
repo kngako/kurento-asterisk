@@ -193,7 +193,11 @@ function incomingCall(message) {
 						'urls': ['stun:stun.l.google.com:19302']
 					}
 				]
-			} 
+			},
+			mediaConstraints: {  
+				audio:true,  
+				video:true  
+			}  
 		}
 
 		console.log("Trying to recv stuff...");
@@ -272,7 +276,11 @@ function call() {
 					'urls': ['stun:stun.l.google.com:19302']
 				}
 			]
-		}
+		},
+		mediaConstraints: {  
+			audio:true,  
+			video:true  
+		}  
 	}
 	console.log('create webRtcPeer ...');
 

@@ -30,10 +30,10 @@ var kurentoIPAddress = config.get("kurento.ip");
 var stunServers = config.get("nat.stunServers");
 
 var argv = minimist(process.argv.slice(2), {
-  default: {
-      as_uri: "https://localhost:8443/",
-      ws_uri: `ws://${kurentoIPAddress}:8888/kurento`
-  }
+    default: {
+        as_uri: "https://localhost:8443/",
+        ws_uri: `ws://${kurentoIPAddress}:8888/kurento`
+    }
 });
 
 const OVERLAY_URL = 'https://github.com/Kurento/kurento-tutorial-node/raw/master/kurento-magic-mirror/static/img/mario-wings.png';
@@ -88,6 +88,7 @@ UserSession.prototype.sendMessage = function(message) {
 }
 
 UserSession.prototype.setEndPoint = function(endPoint) {
+    console.log("Setting Endpoint: ", endPoint);
     this.endPoint = endPoint;
 }
 
@@ -137,7 +138,9 @@ KurentoMediaHandler.prototype = {
 
     isReady: function () { return true; },
 
-    close: function () {},
+    close: function () {
+        stop(this.session.id);
+    },
 
     peerConnection: {
         close: new Function()
@@ -149,23 +152,30 @@ KurentoMediaHandler.prototype = {
 
     getDescription: function (onSuccess, onFailure, mediaHint) {
         let user = userRegistry.getByExt(this.ext);
+        // console.log("User endpoint " + this.ext + ": ", user);
         if(user.asteriskSdp.type === 'answer') {
+            console.log("Asterisk Answered:");
             onSuccess(user.asteriskSdp.value);
         } else if (user.pipeline) {
+            console.log("We are on the pipeline");
             user.pipeline.rtpEndPoint.processOffer(user.asteriskSdp.value).then(onSuccess).catch(onFailure);
+        } else {
+            console.error(user.ext + " user has no pipeline: ", user.pipeline);
         }
     },
 
     setDescription: function (desc, onSuccess, onFailure) {
         let user = userRegistry.getByExt(this.ext);
+        // console.log("Description Headers: ", desc.headers);
         user.asteriskSdp = {
             type: 'offer',
-            value: desc
+            value: desc.body
         }; 
         onSuccess();
     },
-    hasDescription: () => {
-        return true;
+    hasDescription: function () {
+        let user = userRegistry.getByExt(this.ext);
+        return user != null && user.sdpOffer != null;
     }
 };
 
@@ -179,28 +189,34 @@ function CallMediaPipeline() {
 
 /* *****************************
     We implemented a simple Kurento media pipeline with a WebRtcEndpoint to 
-    connect to the web client, a RtpEndpoint to connect to Asterisk and a 
-    FaceOverlayFilter to apply the overlay image on top of the video stream
+    connect to the web client, a RtpEndpoint to connect to Asterisk
     *************************** */
 CallMediaPipeline.prototype.createPipeline = function(userId, ws, callback) {
     var self = this;
     getKurentoClient(function(error, kurentoClient) {
         if (error) {
+            console.error("Kurento Client Error: ", error);
             return callback(error);
         }
+        console.log("Now we about to create the media pipeline");
 
         kurentoClient.create('MediaPipeline', function(error, pipeline) {
             if (error) {
+                console.error("Media Pipeline error: ", error);
                 return callback(error);
             }
 
             let endPoints = [
                 {type: "RtpEndpoint", params: {}},
-                {type: "WebRtcEndpoint", params: {}},
-                {type: "FaceOverlayFilter", params: {}},
+                {type: "WebRtcEndpoint", params: {}}
             ];
 
-            pipeline.create(endPoints, function(error, [rtpEndPoint, webEndPoint, faceFilter]) {
+            pipeline.create(endPoints, function(pipeLineError, [rtpEndPoint, webEndPoint]) {
+                if (pipeLineError) {
+                    console.error("We have a pipeline error: ", pipeLineError);
+                    pipeline.release();
+                    return callback(pipeLineError);
+                }
 
                 let user = userRegistry.getById(userId);
 
@@ -212,10 +228,7 @@ CallMediaPipeline.prototype.createPipeline = function(userId, ws, callback) {
                     console.log(`WebRTCEndpoint(${user.ext})`, `${evt.oldState} => ${evt.newState}`)
                 });
                 
-                if (error) {
-                    pipeline.release();
-                    return callback(error);
-                }
+                
 
                 if (candidatesQueue[userId]) {
                     while(candidatesQueue[userId].length) {
@@ -233,19 +246,20 @@ CallMediaPipeline.prototype.createPipeline = function(userId, ws, callback) {
                 });
 
                 let promises = [
-                    faceFilter.setOverlayedImage(OVERLAY_URL, -0.35, -1.2, 1.6, 1.6),
-                    
-                    webEndPoint.connect(faceFilter),
-                    rtpEndPoint.connect(webEndPoint),
-                    faceFilter.connect(rtpEndPoint)
+                    webEndPoint.connect(rtpEndPoint),
+                    rtpEndPoint.connect(webEndPoint)
                 ];
 
                 Promise.all(promises).then(() => {
+                    console.log("Pipeline set up well...");
                     self.rtpEndPoint = rtpEndPoint;
                     self.webRtcEndpoint = webEndPoint;
                     self.pipeline = pipeline;
                     callback(null);
-                }).catch(callback);
+                }).catch(error => {
+                    console.error("Pipeline error: ", error);
+                    callback(error);
+                });
 
             });
         });
@@ -256,6 +270,7 @@ CallMediaPipeline.prototype.generateSdpAnswer = function(sdpOffer, callback) {
     this.webRtcEndpoint.processOffer(sdpOffer, callback);
     this.webRtcEndpoint.gatherCandidates(function(error) {
         if (error) {
+            console.error("Gather Candidates Error: ", error);
             return callback(error);
         }
     });
@@ -333,21 +348,26 @@ wss.on('connection', function(ws) {
     });
 });
 
-// Recover kurentoClient for the first time.
+// Recover kurentoClient for the first time. ws://146.64.213.44:8888/kurento
 function getKurentoClient(callback) {
     if (kurentoClient !== null) {
         return callback(null, kurentoClient);
     }
 
-    kurento(argv.ws_uri, function(error, _kurentoClient) {
-        if (error) {
-            var message = 'Coult not find media server at address ' + argv.ws_uri;
-            return callback(message + ". Exiting with error " + error);
-        }
-
-        kurentoClient = _kurentoClient;
-        callback(null, kurentoClient);
-    });
+    try {
+        kurento(argv.ws_uri, function(error, _kurentoClient) {
+            if (error) {
+                var message = 'Coult not find media server at address ' + argv.ws_uri;
+                return callback(message + ". Exiting with error " + error);
+            }
+    
+            kurentoClient = _kurentoClient;
+            callback(null, kurentoClient);
+        });
+    } catch(error) {
+        console.error("Kurento Media Server Error: ", error);
+    }
+    
 }
 
 function stop(sessionId) {
@@ -387,8 +407,8 @@ function incomingCallResponse(calleeId, callResponse, calleeSdp, ws) {
                 pipeline is created and the RTPEndPoint processes 
                 the SDP offer we got from Asterisk
             *************************************************** */
-           console.log("SDP is as: ", callee.asteriskSdp.value.body);
-            callee.pipeline.rtpEndPoint.processOffer(callee.asteriskSdp.value.body).then((answer) => {
+           console.log("RTP SDP is as: ", callee.sdpOffer);
+            callee.pipeline.rtpEndPoint.processOffer(callee.sdpOffer).then((answer) => {
                 console.log("RTP Endpoint answer: ", answer)
                 callee.asteriskSdp = {
                     type: 'answer', 
@@ -413,30 +433,34 @@ function incomingCallResponse(calleeId, callResponse, calleeSdp, ws) {
 }
 
 function createCallPipeline(user, callback) {
+    console.log("Creating a pipeline: ", user.ext);
     let pipeline = new CallMediaPipeline();
     pipeline.createPipeline(user.id, ws, function(error) {
         if (error) {
+            console.error("This pipeline has an error: ", error);
             pipeline.release();
             return callback(error);
         }
 
+        console.log("Pipeline Generating Answer: ", user.ext);
+
         pipeline.generateSdpAnswer(user.sdpOffer, function(error, sdpAnswer) {
             if (error) {
                 console.error("We have an error: ", error);
-                console.log("Corresponding to this answer:", sdpAnswer);
+                console.error("Corresponding to this answer:", sdpAnswer);
                 pipeline.release();
                 return callback(error);
             }
 
+            
             user.pipeline = pipeline;
             console.log(`${user.ext} <- pipeline`);
-            console.log("Answer: ", sdpAnswer);
             callback(null, sdpAnswer);
         });
     });
 }
 
-function setupCallSession(user) {
+function setupCallSession(user, to) {
     
     function rejectCall(rejectCause) {
         var message  = {
@@ -457,31 +481,6 @@ function setupCallSession(user) {
             stop(user.id);
         }
     }
-    
-    // This can be omitted 
-    user.session.on('progress', () => console.log('SESSION: progress'));
-    user.session.on('cancel', () => console.log('SESSION: cancel'));
-    user.session.on('refer', () => console.log('SESSION: refer'));
-    user.session.on('replaced', () => console.log('SESSION: replaced'));
-    user.session.on('dtmf', () => console.log('SESSION: dtmf'));
-    user.session.on('muted', () => console.log('SESSION: muted'));
-    user.session.on('unmuted', () => console.log('SESSION: unmuted'));
-    user.session.on('bye', () => console.log('SESSION: bye'));
-
-    user.session.on('terminated', terminateCall);
-    user.session.on('failed', terminateCall);
-    user.session.on('rejected', terminateCall);
-
-    // This would tell a caller that its INVITE was accepted
-    user.session.on('accepted', () => {
-        console.log("Call was accepted!!!!!");
-        let message = {
-            id: 'callResponse',
-            response : 'accepted',
-            sdpAnswer: user.sdpAnswer
-        };
-        user.sendMessage(message);
-    });
 
     // Afterwards a Kurento media pipeline is created to initiate communication
     createCallPipeline(user, (error, sdpAnswer) => {
@@ -491,13 +490,35 @@ function setupCallSession(user) {
             rejectCall(JSON.stringify(error));
         } else {
             user.sdpAnswer = sdpAnswer;
-            // We should be calling somethin
-            // let message = {
-            //     id: 'callResponse',
-            //     response : 'accepted',
-            //     sdpAnswer: user.sdpAnswer
-            // };
-            // user.sendMessage(message);
+
+            var session = user.ua.invite(`sip:${to}@${sipServer}`, {
+                inviteWithoutSdp: true
+            });
+            user.session = session;
+            
+            // This can be omitted 
+            user.session.on('progress', () => console.log('SESSION: progress'));
+            user.session.on('cancel', () => console.log('SESSION: cancel'));
+            user.session.on('refer', () => console.log('SESSION: refer'));
+            user.session.on('replaced', () => console.log('SESSION: replaced'));
+            user.session.on('dtmf', () => console.log('SESSION: dtmf'));
+            user.session.on('muted', () => console.log('SESSION: muted'));
+            user.session.on('unmuted', () => console.log('SESSION: unmuted'));
+            user.session.on('bye', () => console.log('SESSION: bye'));
+        
+            user.session.on('terminated', terminateCall);
+            user.session.on('failed', terminateCall);
+            user.session.on('rejected', terminateCall);
+        
+            // This would tell a caller that its INVITE was accepted
+            user.session.on('accepted', () => {
+                let message = {
+                    id: 'callResponse',
+                    response : 'accepted',
+                    sdpAnswer: user.sdpAnswer
+                };
+                user.sendMessage(message);
+            });
         }
     });
 }
@@ -528,11 +549,7 @@ function call(callerId, to, sdpOffer) {
     *************************************************** */
     if(!caller.session) {
         console.log(`${caller.ext} calling ${to} ...`);
-        var session = caller.ua.invite(`sip:${to}@${sipServer}`, {
-            inviteWithoutSdp: true
-        });
-        caller.session = session;
-        setupCallSession(caller);
+        setupCallSession(caller, to);
     } else {
         console.log('Session xists', caller.session);
     }
@@ -622,8 +639,8 @@ function onIceCandidate(sessionId, _candidate) {
     var candidate = kurento.getComplexType('IceCandidate')(_candidate);
     var user = userRegistry.getById(sessionId);
 
-    if (pipelines[user.id] && pipelines[user.id].webRtcEndpoint && pipelines[user.id].webRtcEndpoint[user.id]) {
-        var webRtcEndpoint = pipelines[user.id].webRtcEndpoint[user.id];
+    if (user && user.pipeline && user.pipeline.webRtcEndpoint) {
+        var webRtcEndpoint = user.pipeline.webRtcEndpoint;
         webRtcEndpoint.addIceCandidate(candidate);
     }
     else {
